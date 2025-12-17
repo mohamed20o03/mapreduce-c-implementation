@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
 /**
  * sorting.c - Sorting Operations
- * 
- * Sorts keys within each partition for ordered processing by reducers.
+ *
+ * Sorts keys within each partition so reducers process keys in lexicographic
+ * order. Sorting is done by collecting pointers to all keys, sorting them via
+ * qsort, and rebuilding a single linked list in bucket 0.
  */
 
 #include "mapreduce_internal.h"
@@ -37,35 +39,43 @@ int compare_keys(const void *a, const void *b) {
  * Converts linked lists in hash table to sorted array for efficient traversal.
  */
 
+/* Count total keys across all buckets in a partition */
+static inline int count_keys_in_partition(partition_t *partition) {
+    int total = 0;
+    for (int i = 0; i < BUCKETS_PER_PARTITION; i++) {
+        key_node_t *curr = partition->buckets[i].head;
+        while (curr) {
+            total++;
+            curr = curr->next_key;
+        }
+    }
+    return total;
+}
+
+/* Collect key pointers into a contiguous array */
+static inline void collect_keys_into_array(partition_t *partition, key_node_t **key_array) {
+    int idx = 0;
+    for (int i = 0; i < BUCKETS_PER_PARTITION; i++) {
+        key_node_t *node = partition->buckets[i].head;
+        while (node) {
+            key_array[idx++] = node;
+            node = node->next_key;
+        }
+    }
+}
+
 int sort_partition(partition_t *partition) {
     if (!partition) return 0;
 
     /* Count total keys across all buckets */
-    int total_keys = 0;
-    for (int i = 0; i < BUCKETS_PER_PARTITION; i++) {
-        key_node_t *curr = partition->buckets[i].head;
-        while (curr) {
-            total_keys++;
-            curr = curr->next_key;
-        }
-    }
+    int total_keys = count_keys_in_partition(partition);
 
     if (total_keys == 0)
         return 0;
 
     /* Collect all key pointers into array */
     key_node_t **key_array = malloc(total_keys * sizeof(key_node_t *));
-    
-    int idx = 0;
-
-    for (int i = 0; i < BUCKETS_PER_PARTITION; i++) {
-        key_node_t *node = partition->buckets[i].head;
-        while (node) {
-            /* Store pointer to node */
-            key_array[idx++] = node;
-            node = node->next_key;
-        }
-    }
+    collect_keys_into_array(partition, key_array);
 
     /* Sort array of pointers */
     qsort(key_array, total_keys, sizeof(key_node_t *), compare_keys);

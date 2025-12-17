@@ -1,0 +1,45 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+
+# Local datasets and outputs
+input/
+output/
+simple_output.txt
+mapreduce_inverted_sorted.txt
+SimpleInvertedIndex/inverted_index
+
+# Metrics reports (rename if you want to keep history)
+metrics_report*.txt
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.log
+
+# Core dumps
+core
+core.*
+
+# Valgrind output
+vgcore.*
+*.memcheck
+
+# Test outputs
+test_output/
+*.test
+
+# Backup files
+*_backup
+*.orig

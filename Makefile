@@ -16,7 +16,7 @@ BIN_DIR = $(BUILD_DIR)/bin
 TARGET = $(BIN_DIR)/mapreduce
 
 # Source files
-SRCS = main.c mapreduce.c mapper.c reduce.c partition.c buffer.c sorting.c reader_queue.c metrics.c
+SRCS = main.c job.c mapreduce.c mapper.c reduce.c partition.c buffer.c sorting.c reader_queue.c metrics.c
 
 # Object files (placed in obj directory)
 OBJS = $(SRCS:%.c=$(OBJ_DIR)/%.o)

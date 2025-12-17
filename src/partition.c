@@ -1,7 +1,8 @@
 /**
  * partition.c - Partition Management
- * 
+ *
  * Handles partition initialization, hash table creation, and hash functions.
+ * Uses a simple djb2-style string hash by default for partitioning.
  */
 
 #include "mapreduce_internal.h"
@@ -14,6 +15,17 @@ get_states_t *get_states = NULL;
 int num_partitions = 0;
 Partitioner partitioner_func = NULL;
 
+/* Small helpers to keep init logic tidy */
+static inline void init_bucket(bucket_t *b) {
+    b->head = NULL;
+    pthread_mutex_init(&b->lock, NULL);
+}
+
+static inline void init_reducer_state(get_states_t *s) {
+    s->curr_key = NULL;
+    s->next_value = NULL;
+}
+
 /**
  * default_hash - Default hash function for strings
  * @str: String to hash
@@ -25,7 +37,7 @@ unsigned long default_hash (char *str) {
     unsigned long hash = 5381;
     int c;
     while((c = *str++))
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c*/
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
     return hash;
 }
 
@@ -54,15 +66,13 @@ void init_partitions(int num) {
 
     for (int i = 0; i < num_partitions; i++) {
         partitions[i].buckets = malloc(BUCKETS_PER_PARTITION * sizeof(bucket_t));
-        
+
         /* Initialize each bucket */
         for (int j = 0; j < BUCKETS_PER_PARTITION; j++) {
-            partitions[i].buckets[j].head = NULL;
-            pthread_mutex_init(&partitions[i].buckets[j].lock, NULL);
+            init_bucket(&partitions[i].buckets[j]);
         }
-        
+
         /* Initialize reducer state */
-        get_states[i].curr_key = NULL;
-        get_states[i].next_value = NULL;
+        init_reducer_state(&get_states[i]);
     }
 }

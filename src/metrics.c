@@ -2,10 +2,25 @@
 /**
  * metrics.c - Runtime metrics recorder
  *
- * Collects coarse and fine-grained stats while the MapReduce pipeline runs.
- * The module stays entirely optional: callers invoke metrics_* helpers, which
- * no-op if initialization failed. Data is aggregated atomically and dumped to
- * a readable report at job completion.
+ * OVERVIEW:
+ * Collects coarse (phase timings) and fine-grained stats (queue waits,
+ * buffer flushes, lock contention, per-partition counts) during a MapReduce
+ * job. All `metrics_*` APIs are thread-safe and cheap; they use atomics to
+ * avoid locks on hot paths. If `metrics_init()` was not called, every API
+ * silently no-ops, keeping metrics optional.
+ *
+ * TYPICAL USAGE FLOW:
+ *   1) metrics_init(path)
+ *   2) metrics_set_job_configuration(...)
+ *   3) metrics_set_partition_count(reducers)
+ *   4) metrics_stage_begin(MAP) ... metrics_stage_end(MAP)
+ *      metrics_stage_begin(SORT) ... metrics_stage_end(SORT)
+ *      metrics_stage_begin(REDUCE) ... metrics_stage_end(REDUCE)
+ *   5) metrics_set_timing(wall,user,sys)
+ *   6) metrics_write_report(); metrics_shutdown();
+ *
+ * Thread safety: hot-path recorders use atomics; arrays are protected by
+ * `partition_lock`; stage times use `stage_lock`.
  */
 #include "metrics.h"
 
@@ -41,6 +56,7 @@ typedef struct {
     struct timespec stage_start[METRICS_STAGE_COUNT];
     double stage_durations_ms[METRICS_STAGE_COUNT];
 
+    /* Hot-path counters (atomics keep recording lock-free) */
     atomic_long reader_chunks;
     atomic_long reader_bytes;
     atomic_long mapper_chunks;
@@ -62,6 +78,7 @@ typedef struct {
     atomic_long queue_depth_samples;
     atomic_int max_queue_depth;
 
+    /* Per-partition stats (allocated once reducers known) */
     int num_partitions;
     double *partition_sort_ms;
     long *partition_sort_keys;
@@ -129,6 +146,7 @@ void metrics_set_partition_count(int partitions) {
 
     pthread_mutex_lock(&g_metrics.partition_lock);
 
+    /* Reallocate fresh arrays if called multiple times in tests */
     if (g_metrics.partition_sort_ms) {
         free(g_metrics.partition_sort_ms);
         g_metrics.partition_sort_ms = NULL;
@@ -254,6 +272,7 @@ void metrics_record_queue_pop_wait(int64_t wait_ns) {
  */
 void metrics_record_queue_depth(int depth) {
     if (!g_metrics.initialized || depth < 0) return;
+    /* Sample average depth and track a max with CAS */
     atomic_fetch_add_explicit(&g_metrics.queue_depth_total, depth, memory_order_relaxed);
     atomic_fetch_add_explicit(&g_metrics.queue_depth_samples, 1, memory_order_relaxed);
 
@@ -344,6 +363,7 @@ static int partition_lock_wait_cmp(const void *a, const void *b) {
  * write_partition_summary - Highlight heaviest partitions in report footer.
  */
 static void write_partition_summary(FILE *fp) {
+    /* Highlight top partitions by reduced key count */
     if (!g_metrics.partition_reduced_keys || g_metrics.num_partitions <= 0) return;
 
     int n = g_metrics.num_partitions;
@@ -372,6 +392,7 @@ static void write_partition_summary(FILE *fp) {
 }
 
 static void write_partition_lock_summary(FILE *fp) {
+    /* Highlight partitions with the heaviest lock waits */
     if (!g_metrics.partition_lock_wait_ns_arr || g_metrics.num_partitions <= 0) return;
 
     int n = g_metrics.num_partitions;
@@ -411,6 +432,7 @@ void metrics_write_report(void) {
         return;
     }
 
+    /* Pull consistent snapshots up front (best-effort; relaxed order is fine for reporting) */
     long reader_chunks = atomic_load_explicit(&g_metrics.reader_chunks, memory_order_relaxed);
     long reader_bytes = atomic_load_explicit(&g_metrics.reader_bytes, memory_order_relaxed);
     long mapper_chunks = atomic_load_explicit(&g_metrics.mapper_chunks, memory_order_relaxed);

@@ -12,17 +12,13 @@
  */
 
 #define _GNU_SOURCE
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
 #include <ctype.h>
 
 #include "mapreduce.h"
-#include "metrics.h"
+#include "job.h"
 
 /* Output directory used by reducers when writing files */
 const char *output_dir = "output";
@@ -144,104 +140,10 @@ void Reduce(char *key, Getter get_next, int partition_number) {
 }
 
 int main(int argc, char *argv[]) {
-    int num_readers = 3, num_mappers = 5, num_reducers = 5;
-
-    /* Parse command-line flags */
-    int i = 1;
-    while (i < argc && argv[i][0] == '-') {
-        if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) 
-            num_readers = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-m") == 0 && i + 1 < argc)
-            num_mappers = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-r") == 0 && i + 1 < argc)
-            num_reducers = atoi(argv[++i]);
-        i++;
-    }
-
-    /* If no input files are provided, print usage error and exit */
-    if (i >= argc) {
-        fprintf(stderr, "Usage: %s [-i num_readers] [-m num_mappers] [-r num_reducers] <file1> [file2 ...]\n", argv[0]);
-        return 1;
-    }
-
-    int num_files = argc - i;
-    char **files = &argv[i];
-
-    struct stat st = {0};
-
-    /* Check if output directory exists; clear it if so, create otherwise */
-    if (stat("output", &st) == 0 && S_ISDIR(st.st_mode)) {
-        /* Directory exists - clear previous output files */
-        if (system("rm -rf output/*") != 0) {
-            fprintf(stderr, "Warning: failed to clear output directory\n");
-        }
-    } else {
-        /* Directory does not exist - create it */
-        mkdir("output", 0755);
-    }
-
-    /* Initialize metrics collection so each run emits metrics_report.txt diagnostics */
-    metrics_init("metrics_report.txt");
-    metrics_set_job_configuration(num_files, num_readers, num_mappers, num_reducers);
-
-    /* Start timing and resource measurement */
-    struct timespec start, end;
-    struct rusage usage_start, usage_end;
-
-    /* Record starting resource usage (CPU time, memory, I/O, etc.) */
-    getrusage(RUSAGE_SELF, &usage_start);
-
-    /* Record starting wall-clock time using monotonic clock */
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-    /* Build argv for MR_Run_With_ReaderQueue */
-    char **mr_argv = malloc((num_files + 1) * sizeof(char *));
-    mr_argv[0] = argv[0];
-    for (int j = 0; j < num_files; j++) 
-        mr_argv[j+1] = files[j];
-
-     /* Run MapReduce with multi-reader queue pattern */
-    const char *disable_combiner = getenv("MR_DISABLE_COMBINER");
-    if (!disable_combiner || strcmp(disable_combiner, "1") != 0) {
-        MR_SetCombiner(DedupCombiner);
-    } else {
-        MR_SetCombiner(NULL);
-    }
-    MR_Run_With_ReaderQueue(num_files + 1, mr_argv, Map, num_readers, num_mappers, Reduce, num_reducers, MR_DefaultHashPartition);
-
-    free(mr_argv);
-
-    /* Calculate elapsed time and resource usage */
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    getrusage(RUSAGE_SELF, &usage_end);
-
-    double wall_time = (end.tv_sec - start.tv_sec) +
-                       (end.tv_nsec - start.tv_nsec) / 1e9;
-
-    double user_cpu = (usage_end.ru_utime.tv_sec - usage_start.ru_utime.tv_sec) +
-                      (usage_end.ru_utime.tv_usec - usage_start.ru_utime.tv_usec) / 1e6;
-
-    double sys_cpu = (usage_end.ru_stime.tv_sec - usage_start.ru_stime.tv_sec) +
-                     (usage_end.ru_stime.tv_usec - usage_start.ru_stime.tv_usec) / 1e6;
-
-    /* Store timing in metrics system before writing */
-    metrics_set_timing(wall_time, user_cpu, sys_cpu);
-
-    /* Print performance metrics */
-    fprintf(stderr, "\n===== MapReduce Performance =====\n");
-    fprintf(stderr, "Readers     : %d\n", num_readers);
-    fprintf(stderr, "Mappers     : %d\n", num_mappers);
-    fprintf(stderr, "Reducers    : %d\n", num_reducers);
-    fprintf(stderr, "Files       : %d\n", num_files);
-    fprintf(stderr, "Wall time   : %.3f sec\n", wall_time);
-    fprintf(stderr, "User CPU    : %.3f sec\n", user_cpu);
-    fprintf(stderr, "System CPU  : %.3f sec\n", sys_cpu);
-    fprintf(stderr, "Total CPU   : %.3f sec\n", user_cpu + sys_cpu);
-    fprintf(stderr, "\nOutput: %s/part-*.txt (%d files)\n", output_dir, num_reducers);
-    fprintf(stderr, "====================================\n");
-
-    /* Emit the instrumentation summary after console stats */
-    metrics_write_report();
-    metrics_shutdown();
-    return 0;
+    MR_Job job = MR_DefaultJob();
+    job.map = Map;
+    job.reduce = Reduce;
+    job.combiner = DedupCombiner; /* optional; set NULL to disable */
+    /* Users can override -i/-m/-r via CLI; defaults are in MR_DefaultJob */
+    return MR_Run(&job, argc, argv);
 }
