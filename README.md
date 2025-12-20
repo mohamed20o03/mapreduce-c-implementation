@@ -304,7 +304,7 @@ metrics_report.txt                         # Performance snapshot
 
 | Component | Specification |
 |-----------|---------------|
-| **Hardware** | Dell G15 5520: i7-12700H (14 cores), 16 GB RAM, NVMe SSD |
+| **Hardware** | Dell G15 5520: i7-12700H (20 cores), 16 GB RAM, NVMe SSD |
 | **Dataset** | Seven news articles (≈708 MB, ~2,800 × 256 KB chunks) |
 | **Workload** | Inverted index with map-side deduplication combiner |
 
