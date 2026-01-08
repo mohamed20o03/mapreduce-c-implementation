@@ -466,7 +466,6 @@ We welcome improvements to algorithms, documentation, and instrumentation! Pleas
 
 <div align="center">
 
-**Built for the [OSTEP](http://pages.cs.wisc.edu/~remzi/OSTEP/) MapReduce project**
 
 ⭐ **Found this useful? Star it!** | 📚 **Questions? Open an issue!**
 
